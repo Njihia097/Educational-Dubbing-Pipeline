@@ -9,3 +9,9 @@ postgres_data/
 redis_data/
 storage_data/
 data/
+
+*.pyc
+__pycache__/
+*.pyo
+*.sqlite3
+*.log
