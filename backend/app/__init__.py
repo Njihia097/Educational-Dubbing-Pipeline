@@ -18,9 +18,9 @@ def create_app():
     # from app.routes.api import api_bp
     # app.register_blueprint(api_bp)
 
-    # @app.route("/health")
-    # def health():
-    #     return {"status": "ok"}, 200
+    @app.route("/health")
+    def health():
+        return {"status": "ok"}, 200
 
     from app.routes import api_bp
     app.register_blueprint(api_bp, url_prefix="/api")
