@@ -4,7 +4,13 @@ FROM python:3.13.7-slim
 WORKDIR /app
 
 # System dependencies
-RUN apt-get update && apt-get install -y libpq-dev gcc && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpq-dev \
+        gcc \
+        curl \
+        postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 COPY requirements.txt .
@@ -14,8 +20,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY alembic.ini /app/alembic.ini
 COPY . .
 
+# Ensure entrypoint is executable
+RUN chmod +x /app/entrypoint.sh
+
 
 
 EXPOSE 5000
-CMD flask db upgrade || echo "DB migration failed, continuing..." && flask run --host=0.0.0.0 --port=5000
+
+# Use entrypoint which waits for deps, migrates, then runs the app
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 
