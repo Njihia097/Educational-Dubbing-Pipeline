@@ -11,6 +11,7 @@ storage_data/
 data/
 
 *.pyc
+.pyc
 __pycache__/
 *.pyo
 *.sqlite3
