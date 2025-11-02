@@ -1,27 +1,31 @@
-name: 🧪 CI - Educational Dubbing Pipeline
+name: CI - Educational Dubbing Pipeline
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches:
+      - main
+      - dev
   pull_request:
-    branches: [ "main", "dev" ]
+    branches:
+      - main
+      - dev
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
-      - name: 🧩 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
+      - name: Create backend .env file
+        run: cp backend/.env.example backend/.env
 
-
-      - name: 🧱 Build and start containers
+      - name: Build and start containers
         run: |
           docker compose up -d --build
           echo "Waiting for backend to become ready..."
@@ -33,10 +37,10 @@ jobs:
             sleep 5
           done
 
-      - name: ✅ Run pipeline tests inside container
+      - name: Run pipeline tests inside container
         run: |
           docker exec edu_backend pytest -q tests/test_pipeline.py --disable-warnings --maxfail=1
 
-      - name: 🧹 Clean up
+      - name: Clean up
         if: always()
         run: docker compose down -v
