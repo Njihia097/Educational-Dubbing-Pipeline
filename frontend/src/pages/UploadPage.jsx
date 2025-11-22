@@ -99,6 +99,7 @@ export default function UploadPage() {
     if (!jobInfo?.job_id) return
 
     setCancelling(true)
+    setUrlError('') // Clear any previous errors
     try {
       const res = await fetch(`/api/jobs/${jobInfo.job_id}/cancel`, {
         method: 'POST',
@@ -107,7 +108,13 @@ export default function UploadPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to cancel job')
 
-      // Clear job state
+      // Show success message briefly before clearing
+      setUrlError('') // Clear errors
+      
+      // Wait a moment to show the success state
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Clear job state completely
       setJobInfo(null)
       setDubbedUrl(null)
       setUrlError('')
@@ -121,6 +128,10 @@ export default function UploadPage() {
       setFile(null)
       setPreviewUrl(null)
       setShowCancelConfirm(false)
+      
+      // Clear from localStorage to stop polling
+      localStorage.removeItem('current_job_id')
+      
     } catch (err) {
       console.error('Failed to cancel job', err)
       setUrlError(err.message || 'Failed to cancel job')
@@ -379,10 +390,29 @@ export default function UploadPage() {
             <p className="text-sm text-slate-600 mb-6">
               Are you sure you want to cancel the current dubbing process? This action cannot be undone and any progress will be lost.
             </p>
+            
+            {/* Loading indicator during cancellation */}
+            {cancelling && (
+              <div className="mb-4 flex items-center gap-2 text-sm text-slate-600">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                <span>Cancelling job...</span>
+              </div>
+            )}
+            
+            {/* Error message */}
+            {urlError && !cancelling && (
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                {urlError}
+              </div>
+            )}
+            
             <div className="flex items-center justify-end gap-3">
               <button
                 type="button"
-                onClick={() => setShowCancelConfirm(false)}
+                onClick={() => {
+                  setShowCancelConfirm(false)
+                  setUrlError('')
+                }}
                 disabled={cancelling}
                 className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 disabled:opacity-50"
               >

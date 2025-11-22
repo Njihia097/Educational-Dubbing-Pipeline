@@ -173,6 +173,7 @@ def full_chain():
                 "english_segments": english_segments,  # List of {text, start, end}
                 "swahili_segments": swahili_segments,  # List of {text, start, end}
                 "output": out_path,  # backend expects this
+                "pipeline_metrics": result.get("pipeline_metrics"),  # Optional: ASR confidence, model versions, etc.
             }
         )
 

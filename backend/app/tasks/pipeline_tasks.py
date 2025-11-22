@@ -105,7 +105,7 @@ def task_full_chain(self, video_s3_uri: str):
     tmp_file.unlink(missing_ok=True)
 
     # 5) Build payload forwarded into _finalize_job
-    # Include both plain text and timestamped segments
+    # Include both plain text and timestamped segments, plus pipeline metrics
     payload = {
         "video_s3_uri": video_s3_uri,
         "output_s3_uri": s3_uri,
@@ -113,6 +113,7 @@ def task_full_chain(self, video_s3_uri: str):
         "swahili": data.get("swahili", ""),
         "english_segments": data.get("english_segments", []),
         "swahili_segments": data.get("swahili_segments", []),
+        "pipeline_metrics": data.get("pipeline_metrics"),  # Optional: ASR confidence, model versions, processing time, etc.
     }
     return payload
 
