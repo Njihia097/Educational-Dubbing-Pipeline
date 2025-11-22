@@ -12,6 +12,7 @@ import AdminJobs from './pages/AdminJobs'
 import DashboardOverview from './pages/DashboardOverview'
 import SystemOverview from './pages/AdminDashboard/SystemOverview'
 import WorkerMonitoring from './pages/AdminDashboard/WorkerMonitoring'
+import PipelineMetrics from './pages/AdminDashboard/PipelineMetrics'
 
 function App() {
   return (
@@ -58,6 +59,9 @@ function App() {
 
             {/* Admin: worker monitoring */}
             <Route path="admin/monitoring" element={<WorkerMonitoring />} />
+
+            {/* Admin: pipeline metrics */}
+            <Route path="admin/pipeline-metrics" element={<PipelineMetrics />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/login" replace />} />

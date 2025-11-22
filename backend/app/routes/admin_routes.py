@@ -2,7 +2,7 @@
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 import requests
@@ -10,7 +10,7 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy import func
 
 from app.database import db
-from app.models.models import Job
+from app.models.models import Job, JobStep
 from app.routes.auth_routes import require_admin
 from app.utils.minio_client import get_minio_client
 
@@ -386,4 +386,216 @@ def monitoring_external_ai():
             "error": str(e),
             "url": health_url if 'health_url' in locals() else "unknown",
         }), 200
+
+
+# ------------------------------------------------------------------------------
+# PIPELINE METRICS ENDPOINTS
+# ------------------------------------------------------------------------------
+
+@admin_bp.route("/metrics/pipeline", methods=["GET"])
+@cached_metrics(cache_seconds=15)
+def metrics_pipeline():
+    """Get aggregated pipeline metrics: processing times, word counts, translation ratios."""
+    if not require_admin():
+        return jsonify({"error": "Admin privileges required"}), 403
+
+    try:
+        # Get all succeeded jobs and filter for those with text metrics
+        all_succeeded = Job.query.filter(Job.state == "succeeded").all()
+        succeeded_jobs = [j for j in all_succeeded if j.meta and j.meta.get("text_metrics")]
+
+        # Aggregate text metrics
+        total_english_words = 0
+        total_swahili_words = 0
+        total_english_chars = 0
+        total_swahili_chars = 0
+        total_videos = 0
+        translation_ratios = []
+        total_durations = []
+
+        for job in succeeded_jobs:
+            text_metrics = job.meta.get("text_metrics", {})
+            if text_metrics:
+                total_english_words += text_metrics.get("english_word_count", 0)
+                total_swahili_words += text_metrics.get("swahili_word_count", 0)
+                total_english_chars += text_metrics.get("english_char_count", 0)
+                total_swahili_chars += text_metrics.get("swahili_char_count", 0)
+                if text_metrics.get("translation_ratio"):
+                    translation_ratios.append(text_metrics["translation_ratio"])
+                if text_metrics.get("total_duration"):
+                    total_durations.append(text_metrics["total_duration"])
+                total_videos += 1
+
+        # Calculate averages
+        avg_words_per_video = total_english_words / total_videos if total_videos > 0 else 0
+        avg_translation_ratio = sum(translation_ratios) / len(translation_ratios) if translation_ratios else None
+        avg_video_duration = sum(total_durations) / len(total_durations) if total_durations else None
+
+        # Calculate step durations from JobStep metrics
+        step_durations = {}
+        for step_name in ["asr", "punctuate", "translate", "tts", "separate_music", "mix", "replace_audio"]:
+            steps = (
+                JobStep.query
+                .filter(JobStep.name == step_name)
+                .filter(JobStep.state == "succeeded")
+                .all()
+            )
+            if steps:
+                durations = [
+                    s.metrics.get("duration_seconds", 0) 
+                    for s in steps 
+                    if s.metrics and s.metrics.get("duration_seconds")
+                ]
+                if durations:
+                    step_durations[step_name] = {
+                        "avg": sum(durations) / len(durations),
+                        "min": min(durations),
+                        "max": max(durations),
+                        "count": len(durations),
+                    }
+
+        return jsonify({
+            "text_analytics": {
+                "total_english_words": total_english_words,
+                "total_swahili_words": total_swahili_words,
+                "total_english_chars": total_english_chars,
+                "total_swahili_chars": total_swahili_chars,
+                "total_videos_processed": total_videos,
+                "avg_words_per_video": round(avg_words_per_video, 2),
+                "avg_translation_ratio": round(avg_translation_ratio, 3) if avg_translation_ratio else None,
+                "avg_video_duration_seconds": round(avg_video_duration, 2) if avg_video_duration else None,
+            },
+            "step_durations": step_durations,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching pipeline metrics: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/metrics/pipeline/steps", methods=["GET"])
+@cached_metrics(cache_seconds=15)
+def metrics_pipeline_steps():
+    """Get step-by-step performance metrics: durations, success rates, retry rates."""
+    if not require_admin():
+        return jsonify({"error": "Admin privileges required"}), 403
+
+    try:
+        step_names = ["asr", "punctuate", "translate", "tts", "separate_music", "mix", "replace_audio"]
+        step_stats = {}
+
+        for step_name in step_names:
+            all_steps = JobStep.query.filter(JobStep.name == step_name).all()
+            succeeded_steps = [s for s in all_steps if s.state == "succeeded"]
+            failed_steps = [s for s in all_steps if s.state == "failed"]
+            
+            total_count = len(all_steps)
+            success_count = len(succeeded_steps)
+            failed_count = len(failed_steps)
+            retry_count = sum(s.retry_count or 0 for s in all_steps)
+
+            # Calculate durations for succeeded steps
+            durations = []
+            for step in succeeded_steps:
+                if step.metrics and step.metrics.get("duration_seconds"):
+                    durations.append(step.metrics["duration_seconds"])
+                elif step.started_at and step.finished_at:
+                    # Normalize datetimes to avoid timezone mismatch
+                    started = step.started_at
+                    finished = step.finished_at
+                    # Handle timezone-aware datetimes
+                    if started.tzinfo is not None:
+                        started = started.astimezone(timezone.utc).replace(tzinfo=None)
+                    if finished.tzinfo is not None:
+                        finished = finished.astimezone(timezone.utc).replace(tzinfo=None)
+                    durations.append((finished - started).total_seconds())
+
+            step_stats[step_name] = {
+                "total_count": total_count,
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "retry_count": retry_count,
+                "success_rate": round(success_count / total_count * 100, 2) if total_count > 0 else 0,
+                "retry_rate": round(retry_count / total_count * 100, 2) if total_count > 0 else 0,
+                "avg_duration_seconds": round(sum(durations) / len(durations), 2) if durations else None,
+                "min_duration_seconds": round(min(durations), 2) if durations else None,
+                "max_duration_seconds": round(max(durations), 2) if durations else None,
+            }
+
+        return jsonify({
+            "steps": step_stats,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching pipeline step metrics: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/metrics/pipeline/text-analytics", methods=["GET"])
+@cached_metrics(cache_seconds=15)
+def metrics_pipeline_text_analytics():
+    """Get text analytics aggregations: word counts, translation ratios, segment stats."""
+    if not require_admin():
+        return jsonify({"error": "Admin privileges required"}), 403
+
+    try:
+        # Get all succeeded jobs and filter for those with text metrics
+        all_succeeded = Job.query.filter(Job.state == "succeeded").all()
+        succeeded_jobs = [j for j in all_succeeded if j.meta and j.meta.get("text_metrics")]
+
+        word_counts_en = []
+        word_counts_sw = []
+        char_counts_en = []
+        char_counts_sw = []
+        segment_counts = []
+        translation_ratios = []
+        segment_durations = []
+        video_durations = []
+
+        for job in succeeded_jobs:
+            text_metrics = job.meta.get("text_metrics", {})
+            if text_metrics:
+                if text_metrics.get("english_word_count"):
+                    word_counts_en.append(text_metrics["english_word_count"])
+                if text_metrics.get("swahili_word_count"):
+                    word_counts_sw.append(text_metrics["swahili_word_count"])
+                if text_metrics.get("english_char_count"):
+                    char_counts_en.append(text_metrics["english_char_count"])
+                if text_metrics.get("swahili_char_count"):
+                    char_counts_sw.append(text_metrics["swahili_char_count"])
+                if text_metrics.get("segment_count"):
+                    segment_counts.append(text_metrics["segment_count"])
+                if text_metrics.get("translation_ratio"):
+                    translation_ratios.append(text_metrics["translation_ratio"])
+                if text_metrics.get("avg_segment_duration"):
+                    segment_durations.append(text_metrics["avg_segment_duration"])
+                if text_metrics.get("total_duration"):
+                    video_durations.append(text_metrics["total_duration"])
+
+        def calc_stats(values):
+            if not values:
+                return None
+            return {
+                "min": round(min(values), 2),
+                "max": round(max(values), 2),
+                "avg": round(sum(values) / len(values), 2),
+                "median": round(sorted(values)[len(values) // 2], 2) if values else None,
+                "total": sum(values),
+                "count": len(values),
+            }
+
+        return jsonify({
+            "english_word_count": calc_stats(word_counts_en),
+            "swahili_word_count": calc_stats(word_counts_sw),
+            "english_char_count": calc_stats(char_counts_en),
+            "swahili_char_count": calc_stats(char_counts_sw),
+            "segment_count": calc_stats(segment_counts),
+            "translation_ratio": calc_stats(translation_ratios),
+            "avg_segment_duration": calc_stats(segment_durations),
+            "video_duration": calc_stats(video_durations),
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching text analytics: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 

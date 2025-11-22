@@ -123,6 +123,13 @@ def create_job():
 
     try:
         task = queue_dubbing_chain(str(job.id), s3_uri)
+        
+        # Store task_id in job.meta for cancellation support
+        meta = dict(job.meta or {})
+        meta["task_id"] = task.id
+        job.meta = meta
+        db.session.commit()
+        
         return jsonify(
             {
                 "job_id": str(job.id),
@@ -499,10 +506,34 @@ def cancel_job(job_id):
     if task_id:
         try:
             from app.celery_app import celery_app
+            # Revoke the main chain task
             celery_app.control.revoke(task_id, terminate=True)
+            logger.info(f"Revoked Celery task {task_id} for job {job_id}")
+            
+            # Also try to revoke any child tasks in the chain
+            # The chain task ID is the parent, but we should also check for child tasks
+            # Note: Celery chains create child tasks, but revoking the parent should handle it
+            # However, we can also try to get active tasks and revoke any related to this job
+            try:
+                inspect = celery_app.control.inspect()
+                active_tasks = inspect.active()
+                if active_tasks:
+                    for worker, tasks in active_tasks.items():
+                        for task in tasks:
+                            # Check if task is related to this job (by checking args/kwargs)
+                            task_info = task.get("args", []) + list(task.get("kwargs", {}).values())
+                            if job_id in str(task_info):
+                                celery_app.control.revoke(task["id"], terminate=True)
+                                logger.info(f"Revoked related task {task['id']} for job {job_id}")
+            except Exception as inspect_error:
+                # Inspection might fail, but that's okay
+                logger.debug(f"Could not inspect active tasks: {inspect_error}")
+                
         except Exception as e:
             # Log but don't fail - job is already marked as cancelled
-            logger.warning(f"Failed to revoke Celery task {task_id}: {e}")
+            logger.warning(f"Failed to revoke Celery task {task_id} for job {job_id}: {e}")
+    else:
+        logger.warning(f"No task_id found in job.meta for job {job_id}, cannot revoke Celery task")
 
     db.session.commit()
 

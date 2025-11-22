@@ -28,11 +28,36 @@ def set_step_running(job_id: str, step: str):
         db.session.commit()
 
 
+def _normalize_datetime(dt):
+    """Normalize datetime to timezone-naive UTC for consistent comparison."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        # Convert timezone-aware to timezone-naive UTC
+        # Use astimezone(UTC) then remove timezone info
+        from datetime import timezone
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def set_step_success(job_id: str, step: str):
     js = JobStep.query.filter_by(job_id=job_id, name=step).first()
     if js:
         js.state = "succeeded"
         js.finished_at = _now()
+        
+        # Calculate and store step duration in metrics
+        if js.started_at and js.finished_at:
+            # Normalize both datetimes to avoid timezone mismatch
+            started = _normalize_datetime(js.started_at)
+            finished = _normalize_datetime(js.finished_at)
+            duration_seconds = (finished - started).total_seconds()
+            metrics = dict(js.metrics or {})
+            metrics["duration_seconds"] = duration_seconds
+            metrics["started_at"] = js.started_at.isoformat() if js.started_at else None
+            metrics["finished_at"] = js.finished_at.isoformat() if js.finished_at else None
+            js.metrics = metrics
+        
         db.session.commit()
 
 

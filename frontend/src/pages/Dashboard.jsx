@@ -117,6 +117,20 @@ export default function Dashboard() {
             </NavLink>
 
             <NavLink
+              to="/dashboard/admin/pipeline-metrics"
+              className={({ isActive }) =>
+                [
+                  baseLinkClasses,
+                  isActive
+                    ? 'bg-amber-50 text-amber-800'
+                    : 'text-slate-700 hover:bg-slate-100',
+                ].join(' ')
+              }
+            >
+              Pipeline Metrics
+            </NavLink>
+
+            <NavLink
               to="/dashboard/admin/jobs"
               className={({ isActive }) =>
                 [
